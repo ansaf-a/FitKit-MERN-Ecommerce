@@ -14,5 +14,8 @@
     "react-dom": "latest",
     "react-router-dom": "latest",
     "vite": "latest"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.1.1"
   }
 }
