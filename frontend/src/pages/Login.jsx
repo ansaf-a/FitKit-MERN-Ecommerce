@@ -18,7 +18,11 @@ function Login() {
       const response = await loginUser(form);
       localStorage.setItem("fitkit-token", response.data.token);
       localStorage.setItem("fitkit-user", JSON.stringify(response.data.user));
-      navigate("/products");
+      if (response.data.user?.role === "admin") {
+        navigate("/admin");
+      } else {
+        navigate("/products");
+      }
     } catch (error) {
       setMessage(error.response?.data?.message || "Login failed.");
     }

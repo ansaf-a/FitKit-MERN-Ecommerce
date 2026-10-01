@@ -22,6 +22,11 @@ export const updateProduct = (id, product) =>
 export const deleteProduct = (id) => api.delete(`/products/${id}`);
 export const createOrder = (order) => api.post("/orders", order);
 export const getMyOrders = () => api.get("/orders/my-orders");
+export const getAllOrders = () => api.get("/orders");
+export const getProductOrderHistory = (productId) =>
+  api.get(`/orders/product/${productId}`);
+export const updateOrderStatus = (id, status) =>
+  api.put(`/orders/${id}/status`, { status });
 export const registerUser = (user) => api.post("/auth/register", user);
 export const loginUser = (credentials) => api.post("/auth/login", credentials);
 

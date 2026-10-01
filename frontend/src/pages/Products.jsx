@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import Navbar from "../components/Navbar.jsx";
 import CategoryFilter from "../components/CategoryFilter.jsx";
@@ -20,6 +20,16 @@ function Products() {
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
 
+  // Sync category state whenever the URL search parameter changes
+  useEffect(() => {
+    const categoryFromUrl = searchParams.get("category");
+    if (categoryFromUrl && categories.includes(categoryFromUrl)) {
+      setSelectedCategory(categoryFromUrl);
+    } else if (!categoryFromUrl) {
+      setSelectedCategory("All");
+    }
+  }, [searchParams]);
+
   useEffect(() => {
     async function loadProducts() {
       try {
@@ -37,18 +47,20 @@ function Products() {
     loadProducts();
   }, []);
 
-  const visibleProducts = products.filter((product) => {
-    const matchesSearch = product.name
-      .toLowerCase()
-      .includes(searchTerm.toLowerCase());
-    const matchesCategory =
-      selectedCategory === "All" || product.category === selectedCategory;
+  const visibleProducts = useMemo(() => {
+    return products.filter((product) => {
+      const matchesSearch = product.name
+        .toLowerCase()
+        .includes(searchTerm.toLowerCase());
+      const matchesCategory =
+        selectedCategory === "All" || product.category === selectedCategory;
 
-    return matchesSearch && matchesCategory;
-  });
+      return matchesSearch && matchesCategory;
+    });
+  }, [products, searchTerm, selectedCategory]);
 
-  const sortedProducts = [...visibleProducts].sort(
-    (firstProduct, secondProduct) => {
+  const sortedProducts = useMemo(() => {
+    return [...visibleProducts].sort((firstProduct, secondProduct) => {
       if (sortBy === "price-low")
         return firstProduct.price - secondProduct.price;
       if (sortBy === "price-high")
@@ -56,8 +68,8 @@ function Products() {
       if (sortBy === "rating")
         return secondProduct.rating - firstProduct.rating;
       return 0;
-    },
-  );
+    });
+  }, [visibleProducts, sortBy]);
 
   function handleCategoryChange(category) {
     setSelectedCategory(category);

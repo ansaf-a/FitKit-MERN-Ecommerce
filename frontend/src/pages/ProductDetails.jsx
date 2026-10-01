@@ -14,6 +14,7 @@ function ProductDetails() {
   const [quantity, setQuantity] = useState(1);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
+  const [isAdded, setIsAdded] = useState(false);
 
   useEffect(() => {
     async function loadProduct() {
@@ -42,6 +43,16 @@ function ProductDetails() {
     }
   }
 
+  function handleAddToCart() {
+    const success = addToCart(product, quantity);
+    if (success) {
+      setIsAdded(true);
+      setTimeout(() => {
+        setIsAdded(false);
+      }, 1600);
+    }
+  }
+
   return (
     <div className="products-page">
       <Navbar />
@@ -67,6 +78,7 @@ function ProductDetails() {
                 className="details-image"
                 src={product.image || fallbackImage}
                 alt={product.name}
+                decoding="async"
                 onError={(event) => {
                   event.currentTarget.onerror = null;
                   event.currentTarget.src = fallbackImage;
@@ -109,11 +121,16 @@ function ProductDetails() {
               </div>
 
               <button
-                className="details-add-button"
+                className={`details-add-button ${isAdded ? "is-added" : ""}`}
                 type="button"
-                onClick={() => addToCart(product, quantity)}
+                onClick={handleAddToCart}
+                disabled={!product.stock || product.stock <= 0}
               >
-                Add {quantity} to cart
+                {!product.stock || product.stock <= 0
+                  ? "Out of stock"
+                  : isAdded
+                    ? "✓ Added to cart!"
+                    : `Add ${quantity} to cart`}
               </button>
             </div>
           </section>

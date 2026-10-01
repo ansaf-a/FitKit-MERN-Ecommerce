@@ -1,11 +1,21 @@
-import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useState, useCallback } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import {
   createProduct,
   deleteProduct,
+  getAllOrders,
   getProducts,
+  updateOrderStatus,
   updateProduct,
 } from "../services/api.js";
+import AdminSidebar from "../components/admin/AdminSidebar.jsx";
+import AdminStatsOverview from "../components/admin/AdminStatsOverview.jsx";
+import AdminOverviewTab from "../components/admin/AdminOverviewTab.jsx";
+import AdminOrdersTab from "../components/admin/AdminOrdersTab.jsx";
+import AdminProductsTab from "../components/admin/AdminProductsTab.jsx";
+import AdminProductHistoryTab from "../components/admin/AdminProductHistoryTab.jsx";
+import AdminProductFormTab from "../components/admin/AdminProductFormTab.jsx";
+import ProductHistoryModal from "../components/admin/ProductHistoryModal.jsx";
 
 const emptyProduct = {
   name: "",
@@ -13,46 +23,69 @@ const emptyProduct = {
   price: "",
   category: "Strength",
   image: "",
-  rating: "",
-  stock: "",
+  rating: "4.5",
+  stock: "20",
 };
 
 function AdminDashboard() {
   const navigate = useNavigate();
 
   const [products, setProducts] = useState([]);
+  const [orders, setOrders] = useState([]);
+  const [activeTab, setActiveTab] = useState("overview");
   const [form, setForm] = useState(emptyProduct);
   const [editingId, setEditingId] = useState(null);
   const [message, setMessage] = useState("");
+  const [, setLoading] = useState(true);
+
+  // Selected product for detailed order history modal
+  const [selectedProductForHistory, setSelectedProductForHistory] =
+    useState(null);
+
+  // Filters
+  const [orderFilter, setOrderFilter] = useState("all");
+  const [productSearch, setProductSearch] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("all");
+
+  const [user] = useState(() =>
+    JSON.parse(localStorage.getItem("fitkit-user") || "null"),
+  );
+
+  const fetchDashboardData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [productsRes, ordersRes] = await Promise.all([
+        getProducts().catch(() => ({ data: [] })),
+        getAllOrders().catch(() => ({ data: [] })),
+      ]);
+
+      setProducts(productsRes.data || []);
+      setOrders(ordersRes.data || []);
+    } catch {
+      setMessage("Could not load dashboard data.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    const user = JSON.parse(localStorage.getItem("fitkit-user") || "null");
-
     if (!user || user.role !== "admin") {
       navigate("/login");
       return;
     }
 
-    loadProducts();
-  }, [navigate]);
+    fetchDashboardData();
+  }, [navigate, user, fetchDashboardData]);
 
-  async function loadProducts() {
-    try {
-      const response = await getProducts();
-      setProducts(response.data);
-    } catch {
-      setMessage("Could not load products.");
-    }
-  }
+  const handleChange = useCallback((event) => {
+    const { name, value } = event.target;
+    setForm((prev) => ({
+      ...prev,
+      [name]: value,
+    }));
+  }, []);
 
-  function handleChange(event) {
-    setForm({
-      ...form,
-      [event.target.name]: event.target.value,
-    });
-  }
-
-  async function handleSubmit(event) {
+  const handleSubmit = async (event) => {
     event.preventDefault();
     setMessage("");
 
@@ -67,15 +100,16 @@ function AdminDashboard() {
 
       setForm(emptyProduct);
       setEditingId(null);
-      await loadProducts();
+      const res = await getProducts();
+      setProducts(res.data);
+      setActiveTab("products");
     } catch (error) {
       setMessage(error.response?.data?.message || "Admin action failed.");
     }
-  }
+  };
 
-  function startEditing(product) {
+  const startEditing = useCallback((product) => {
     setEditingId(product._id);
-
     setForm({
       name: product.name,
       description: product.description,
@@ -85,338 +119,353 @@ function AdminDashboard() {
       rating: product.rating,
       stock: product.stock,
     });
+    setActiveTab("add-product");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, []);
 
-    window.scrollTo({
-      top: 0,
-      behavior: "smooth",
-    });
-  }
-
-  async function handleDelete(id) {
+  const handleDelete = async (id) => {
     const confirmed = window.confirm(
       "Are you sure you want to delete this product?",
     );
-
     if (!confirmed) return;
 
     try {
       await deleteProduct(id);
-
-      setProducts(products.filter((product) => product._id !== id));
-
+      setProducts((prev) => prev.filter((product) => product._id !== id));
       setMessage("Product deleted successfully.");
     } catch (error) {
       setMessage(
         error.response?.data?.message || "Product could not be deleted.",
       );
     }
-  }
+  };
 
-  function cancelEdit() {
+  const cancelEdit = useCallback(() => {
     setEditingId(null);
     setForm(emptyProduct);
-  }
+    setActiveTab("products");
+  }, []);
 
-  function handleLogout() {
+  // Quick Inline Stock Update Handler
+  const handleStockChange = async (productId, deltaOrValue, isAbsolute = false) => {
+    const currentProduct = products.find((p) => p._id === productId);
+    if (!currentProduct) return;
+
+    let newStock;
+    if (isAbsolute) {
+      newStock = Math.max(0, parseInt(deltaOrValue, 10) || 0);
+    } else {
+      newStock = Math.max(0, (Number(currentProduct.stock) || 0) + deltaOrValue);
+    }
+
+    try {
+      await updateProduct(productId, { stock: newStock });
+      setProducts((prev) =>
+        prev.map((p) => (p._id === productId ? { ...p, stock: newStock } : p)),
+      );
+      setMessage(
+        `Stock for "${currentProduct.name}" updated to ${newStock} units.`,
+      );
+    } catch (error) {
+      setMessage(error.response?.data?.message || "Failed to update stock.");
+    }
+  };
+
+  const handleStatusChange = async (orderId, newStatus) => {
+    try {
+      await updateOrderStatus(orderId, newStatus);
+      setOrders((prev) =>
+        prev.map((o) => (o._id === orderId ? { ...o, status: newStatus } : o)),
+      );
+      // Re-fetch products in case status change triggered stock replenishment/deduction
+      getProducts().then((res) => setProducts(res.data)).catch(() => {});
+      setMessage(`Order #${orderId.slice(-6)} marked as ${newStatus}.`);
+    } catch (error) {
+      setMessage(
+        error.response?.data?.message || "Failed to update order status.",
+      );
+    }
+  };
+
+  const handleLogout = useCallback(() => {
     localStorage.removeItem("fitkit-token");
     localStorage.removeItem("fitkit-user");
     navigate("/login");
-  }
+  }, [navigate]);
+
+  // Precomputed Product Sales Analytics Map: O(Orders * Items) once instead of per product per render
+  const productStatsMap = useMemo(() => {
+    const stats = {};
+    for (const p of products) {
+      stats[p._id] = { orderCount: 0, unitsSold: 0, totalRevenue: 0 };
+    }
+
+    for (const order of orders) {
+      if (!order.products) continue;
+      for (const item of order.products) {
+        const prodId = item.product?._id || item.product;
+        let targetId = prodId;
+
+        if (!targetId || !stats[targetId]) {
+          const matched = products.find(
+            (p) =>
+              String(p._id) === String(prodId) ||
+              p.name?.toLowerCase().trim() === item.name?.toLowerCase().trim(),
+          );
+          if (matched) targetId = matched._id;
+        }
+
+        if (targetId && stats[targetId]) {
+          stats[targetId].orderCount += 1;
+          stats[targetId].unitsSold += item.quantity || 0;
+          stats[targetId].totalRevenue +=
+            (item.quantity || 0) * (item.price || 0);
+        }
+      }
+    }
+    return stats;
+  }, [products, orders]);
+
+  // Derived KPI metrics
+  const { totalRevenue, pendingOrders, confirmedOrders, deliveredOrders } =
+    useMemo(() => {
+      let rev = 0;
+      let pending = 0;
+      let confirmed = 0;
+      let delivered = 0;
+      for (const o of orders) {
+        rev += Number(o.totalAmount) || 0;
+        if (o.status === "Pending") pending++;
+        else if (o.status === "Confirmed") confirmed++;
+        else if (o.status === "Delivered") delivered++;
+      }
+      return {
+        totalRevenue: rev,
+        pendingOrders: pending,
+        confirmedOrders: confirmed,
+        deliveredOrders: delivered,
+      };
+    }, [orders]);
+
+  const lowStockProducts = useMemo(
+    () => products.filter((p) => Number(p.stock) <= 5),
+    [products],
+  );
+
+  const filteredOrders = useMemo(() => {
+    if (orderFilter === "all") return orders;
+    return orders.filter(
+      (order) => order.status?.toLowerCase() === orderFilter.toLowerCase(),
+    );
+  }, [orders, orderFilter]);
+
+  const filteredProducts = useMemo(() => {
+    return products.filter((p) => {
+      const matchesCategory =
+        categoryFilter === "all" ||
+        p.category?.toLowerCase() === categoryFilter.toLowerCase();
+      const matchesSearch =
+        !productSearch ||
+        p.name?.toLowerCase().includes(productSearch.toLowerCase());
+      return matchesCategory && matchesSearch;
+    });
+  }, [products, categoryFilter, productSearch]);
+
+  // Extract order history for modal on-demand
+  const activeProductHistory = useMemo(() => {
+    if (!selectedProductForHistory) return [];
+    const prodId = selectedProductForHistory._id;
+    const prodName = selectedProductForHistory.name?.toLowerCase().trim();
+
+    return orders
+      .map((order) => {
+        const matchedItem = order.products?.find((item) => {
+          const itemProdId = item.product?._id || item.product;
+          return (
+            (itemProdId && String(itemProdId) === String(prodId)) ||
+            (item.name && item.name.toLowerCase().trim() === prodName)
+          );
+        });
+
+        if (!matchedItem) return null;
+
+        return {
+          orderId: order._id,
+          createdAt: order.createdAt,
+          customerName: order.customerName,
+          email: order.email,
+          phone: order.phone,
+          city: order.city,
+          pincode: order.pincode,
+          quantity: matchedItem.quantity,
+          price: matchedItem.price,
+          itemTotal: matchedItem.quantity * matchedItem.price,
+          orderTotal: order.totalAmount,
+          status: order.status,
+        };
+      })
+      .filter(Boolean);
+  }, [selectedProductForHistory, orders]);
+
+  const activeProductStats = useMemo(() => {
+    if (!selectedProductForHistory) {
+      return { orderCount: 0, unitsSold: 0, totalRevenue: 0 };
+    }
+    return (
+      productStatsMap[selectedProductForHistory._id] || {
+        orderCount: 0,
+        unitsSold: 0,
+        totalRevenue: 0,
+      }
+    );
+  }, [selectedProductForHistory, productStatsMap]);
 
   return (
     <div className="admin-dashboard">
-      {/* ADMIN SIDEBAR */}
-
-      <aside className="admin-sidebar">
-        <div className="admin-logo">
-          <span>FK</span>
-          <strong>FITKIT</strong>
-        </div>
-
-        <div className="admin-label">ADMIN PANEL</div>
-
-        <nav className="admin-nav">
-          <button className="admin-nav-item active" type="button">
-            Dashboard
-          </button>
-
-          <button
-            className="admin-nav-item"
-            type="button"
-            onClick={() =>
-              document
-                .getElementById("admin-products")
-                ?.scrollIntoView({ behavior: "smooth" })
-            }
-          >
-            Products
-          </button>
-
-          <button
-            className="admin-nav-item"
-            type="button"
-            onClick={() =>
-              document
-                .getElementById("admin-form")
-                ?.scrollIntoView({ behavior: "smooth" })
-            }
-          >
-            Add Product
-          </button>
-        </nav>
-
-        <button className="admin-logout" type="button" onClick={handleLogout}>
-          Logout
-        </button>
-      </aside>
-
-      {/* MAIN CONTENT */}
+      <AdminSidebar
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        editingId={editingId}
+        setForm={setForm}
+        emptyProduct={emptyProduct}
+        pendingOrders={pendingOrders}
+        productsCount={products.length}
+        user={user}
+        onLogout={handleLogout}
+      />
 
       <main className="admin-content">
         <header className="admin-header">
           <div>
-            <p className="admin-eyebrow">FITKIT CONTROL ROOM</p>
-
-            <h1>Admin Dashboard</h1>
-
-            <p>Manage your fitness product catalogue.</p>
+            <p className="admin-eyebrow">FITKIT MANAGEMENT CONSOLE</p>
+            <h1>
+              {activeTab === "overview" && "Executive Dashboard"}
+              {activeTab === "orders" && "Customer Orders Management"}
+              {activeTab === "products" && "Product Catalogue & Stock Control"}
+              {activeTab === "product-history" && "Product Order & Sales History"}
+              {activeTab === "add-product" &&
+                (editingId ? "Edit Product" : "Add New Product")}
+            </h1>
+            <p>
+              {activeTab === "overview" &&
+                "Live performance KPIs, order tracking, and inventory status."}
+              {activeTab === "orders" &&
+                "Review and update fulfillment statuses of customer purchases."}
+              {activeTab === "products" &&
+                "Instantly update inventory stocks, pricing, and view item order history."}
+              {activeTab === "product-history" &&
+                "View sales performance, units purchased, and full order breakdown per product."}
+              {activeTab === "add-product" &&
+                "Publish fresh fitness gear or update details of existing items."}
+            </p>
           </div>
 
-          <div className="admin-profile">
-            <span className="admin-avatar">A</span>
-
-            <div>
-              <strong>Administrator</strong>
-              <small>Admin</small>
-            </div>
+          <div className="admin-header-actions">
+            <Link className="admin-view-store-btn" to="/products">
+              View Customer Store
+            </Link>
           </div>
         </header>
 
-        {/* STAT CARDS */}
-
-        <section className="admin-stats">
-          <div className="admin-stat-card">
-            <span>Total Products</span>
-            <strong>{products.length}</strong>
+        {message && (
+          <div className="admin-message">
+            <span>{message}</span>
+            <button
+              className="admin-message-close"
+              type="button"
+              onClick={() => setMessage("")}
+            >
+              ✕
+            </button>
           </div>
+        )}
 
-          <div className="admin-stat-card">
-            <span>Categories</span>
-            <strong>4</strong>
-          </div>
+        <AdminStatsOverview
+          totalRevenue={totalRevenue}
+          ordersCount={orders.length}
+          pendingOrders={pendingOrders}
+          confirmedOrders={confirmedOrders}
+          deliveredOrders={deliveredOrders}
+          productsCount={products.length}
+          lowStockProductsCount={lowStockProducts.length}
+          onNavigateOrders={() => setActiveTab("orders")}
+          onNavigatePendingOrders={() => {
+            setOrderFilter("Pending");
+            setActiveTab("orders");
+          }}
+          onNavigateProducts={() => setActiveTab("products")}
+        />
 
-          <div className="admin-stat-card">
-            <span>System</span>
-            <strong className="system-online">● Online</strong>
-          </div>
-        </section>
+        {activeTab === "overview" && (
+          <AdminOverviewTab
+            orders={orders}
+            lowStockProducts={lowStockProducts}
+            setActiveTab={setActiveTab}
+            setForm={setForm}
+            emptyProduct={emptyProduct}
+            setEditingId={setEditingId}
+            onStockChange={handleStockChange}
+          />
+        )}
 
-        {/* ADD / EDIT PRODUCT */}
+        {activeTab === "orders" && (
+          <AdminOrdersTab
+            orders={orders}
+            filteredOrders={filteredOrders}
+            orderFilter={orderFilter}
+            setOrderFilter={setOrderFilter}
+            pendingOrders={pendingOrders}
+            confirmedOrders={confirmedOrders}
+            deliveredOrders={deliveredOrders}
+            onStatusChange={handleStatusChange}
+          />
+        )}
 
-        <section className="admin-panel" id="admin-form">
-          <div className="admin-panel-heading">
-            <div>
-              <p className="admin-eyebrow">PRODUCT MANAGEMENT</p>
+        {activeTab === "products" && (
+          <AdminProductsTab
+            filteredProducts={filteredProducts}
+            productSearch={productSearch}
+            setProductSearch={setProductSearch}
+            categoryFilter={categoryFilter}
+            setCategoryFilter={setCategoryFilter}
+            productStatsMap={productStatsMap}
+            onAddProductClick={() => {
+              setForm(emptyProduct);
+              setEditingId(null);
+              setActiveTab("add-product");
+            }}
+            onStockChange={handleStockChange}
+            onOpenHistory={setSelectedProductForHistory}
+            onStartEditing={startEditing}
+            onDeleteProduct={handleDelete}
+          />
+        )}
 
-              <h2>{editingId ? "Edit Product" : "Add New Product"}</h2>
-            </div>
-          </div>
+        {activeTab === "product-history" && (
+          <AdminProductHistoryTab
+            products={products}
+            productStatsMap={productStatsMap}
+            onOpenHistory={setSelectedProductForHistory}
+          />
+        )}
 
-          <form className="admin-product-form" onSubmit={handleSubmit}>
-            <div className="admin-form-grid">
-              <label>
-                Product Name
-                <input
-                  name="name"
-                  type="text"
-                  value={form.name}
-                  onChange={handleChange}
-                  placeholder="Example: Dumbbells"
-                  required
-                />
-              </label>
-
-              <label>
-                Category
-                <select
-                  name="category"
-                  value={form.category}
-                  onChange={handleChange}
-                >
-                  <option value="Strength">Strength</option>
-                  <option value="Cardio">Cardio</option>
-                  <option value="Yoga">Yoga</option>
-                  <option value="Accessories">Accessories</option>
-                </select>
-              </label>
-
-              <label>
-                Price (₹)
-                <input
-                  name="price"
-                  type="number"
-                  min="0"
-                  value={form.price}
-                  onChange={handleChange}
-                  placeholder="1199"
-                  required
-                />
-              </label>
-
-              <label>
-                Stock
-                <input
-                  name="stock"
-                  type="number"
-                  min="0"
-                  value={form.stock}
-                  onChange={handleChange}
-                  placeholder="20"
-                  required
-                />
-              </label>
-
-              <label>
-                Rating
-                <input
-                  name="rating"
-                  type="number"
-                  min="0"
-                  max="5"
-                  step="0.1"
-                  value={form.rating}
-                  onChange={handleChange}
-                  placeholder="4.5"
-                  required
-                />
-              </label>
-
-              <label>
-                Image URL
-                <input
-                  name="image"
-                  type="text"
-                  value={form.image}
-                  onChange={handleChange}
-                  placeholder="https://..."
-                  required
-                />
-              </label>
-            </div>
-
-            <label>
-              Description
-              <textarea
-                name="description"
-                value={form.description}
-                onChange={handleChange}
-                placeholder="Enter product description..."
-                rows="4"
-                required
-              />
-            </label>
-
-            <div className="admin-form-actions">
-              <button className="admin-primary-button" type="submit">
-                {editingId ? "Update Product" : "Add Product"}
-              </button>
-
-              {editingId && (
-                <button
-                  className="admin-secondary-button"
-                  type="button"
-                  onClick={cancelEdit}
-                >
-                  Cancel
-                </button>
-              )}
-            </div>
-          </form>
-        </section>
-
-        {/* PRODUCT TABLE */}
-
-        <section className="admin-panel" id="admin-products">
-          <div className="admin-panel-heading">
-            <div>
-              <p className="admin-eyebrow">CATALOGUE</p>
-
-              <h2>All Products</h2>
-            </div>
-
-            <span className="product-count">{products.length} Products</span>
-          </div>
-
-          {products.length === 0 ? (
-            <div className="admin-empty">No products available.</div>
-          ) : (
-            <div className="admin-table-wrapper">
-              <table className="admin-table">
-                <thead>
-                  <tr>
-                    <th>Product</th>
-                    <th>Category</th>
-                    <th>Price</th>
-                    <th>Stock</th>
-                    <th>Rating</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {products.map((product) => (
-                    <tr key={product._id}>
-                      <td>
-                        <div className="admin-product-info">
-                          <img
-                            src={product.image}
-                            alt={product.name}
-                            onError={(event) => {
-                              event.currentTarget.style.display = "none";
-                            }}
-                          />
-
-                          <strong>{product.name}</strong>
-                        </div>
-                      </td>
-
-                      <td>{product.category}</td>
-
-                      <td>₹{product.price}</td>
-
-                      <td>{product.stock}</td>
-
-                      <td>★ {product.rating}</td>
-
-                      <td>
-                        <div className="admin-actions">
-                          <button
-                            className="edit-button"
-                            type="button"
-                            onClick={() => startEditing(product)}
-                          >
-                            Edit
-                          </button>
-
-                          <button
-                            className="delete-button"
-                            type="button"
-                            onClick={() => handleDelete(product._id)}
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
-
-        {message && <div className="admin-message">{message}</div>}
+        {activeTab === "add-product" && (
+          <AdminProductFormTab
+            form={form}
+            editingId={editingId}
+            onChange={handleChange}
+            onSubmit={handleSubmit}
+            onCancel={cancelEdit}
+          />
+        )}
       </main>
+
+      <ProductHistoryModal
+        product={selectedProductForHistory}
+        history={activeProductHistory}
+        stats={activeProductStats}
+        onClose={() => setSelectedProductForHistory(null)}
+      />
     </div>
   );
 }

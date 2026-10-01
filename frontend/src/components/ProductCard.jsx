@@ -1,5 +1,5 @@
+import { memo, useState } from "react";
 import { Link } from "react-router-dom";
-import { useState } from "react";
 import { useCart } from "../context/CartContext.jsx";
 
 const fallbackImage =
@@ -7,18 +7,18 @@ const fallbackImage =
 
 function ProductCard({ product }) {
   const { addToCart } = useCart();
-  const [notification, setNotification] = useState("");
+  const [isAdded, setIsAdded] = useState(false);
 
   const productId = product._id || product.id;
 
   const handleAddToCart = () => {
-    addToCart(product);
-
-    setNotification(`${product.name} added to cart!`);
-
-    setTimeout(() => {
-      setNotification("");
-    }, 2500);
+    const success = addToCart(product);
+    if (success) {
+      setIsAdded(true);
+      setTimeout(() => {
+        setIsAdded(false);
+      }, 1600);
+    }
   };
 
   return (
@@ -28,6 +28,8 @@ function ProductCard({ product }) {
           className="product-image"
           src={product.image || fallbackImage}
           alt={product.name}
+          loading="lazy"
+          decoding="async"
           onError={(event) => {
             event.currentTarget.onerror = null;
             event.currentTarget.src = fallbackImage;
@@ -53,20 +55,21 @@ function ProductCard({ product }) {
           </Link>
 
           <button
-            className="add-button"
+            className={`add-button ${isAdded ? "is-added" : ""}`}
             type="button"
             onClick={handleAddToCart}
+            disabled={product.stock <= 0}
           >
-            Add to cart
+            {product.stock <= 0
+              ? "Out of stock"
+              : isAdded
+                ? "✓ Added!"
+                : "Add to cart"}
           </button>
         </div>
       </div>
-
-      {notification && (
-        <div className="cart-notification">✓ {notification}</div>
-      )}
     </article>
   );
 }
 
-export default ProductCard;
+export default memo(ProductCard);

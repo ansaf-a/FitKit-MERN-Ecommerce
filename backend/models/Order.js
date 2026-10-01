@@ -24,11 +24,17 @@ const orderSchema = new mongoose.Schema(
     pincode: { type: String, required: true, trim: true },
     status: {
       type: String,
-      enum: ["Pending", "Confirmed", "Delivered"],
+      enum: ["Pending", "Confirmed", "Delivered", "Cancelled"],
       default: "Pending",
     },
   },
   { timestamps: true },
 );
+
+// Performance Indexes for customer lookup, admin fulfillment, and analytics
+orderSchema.index({ user: 1, createdAt: -1 });
+orderSchema.index({ createdAt: -1 });
+orderSchema.index({ status: 1 });
+orderSchema.index({ "products.product": 1, createdAt: -1 });
 
 module.exports = mongoose.model("Order", orderSchema);

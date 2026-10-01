@@ -1,43 +1,113 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 
 const CartContext = createContext();
 
 function CartProvider({ children }) {
   const [cartItems, setCartItems] = useState(() => {
-    const savedCart = localStorage.getItem("fitkit-cart");
-    return savedCart ? JSON.parse(savedCart) : [];
+    try {
+      const savedCart = localStorage.getItem("fitkit-cart");
+      return savedCart ? JSON.parse(savedCart) : [];
+    } catch {
+      return [];
+    }
   });
 
+  const [toast, setToast] = useState(null);
+
   useEffect(() => {
-    localStorage.setItem("fitkit-cart", JSON.stringify(cartItems));
+    try {
+      localStorage.setItem("fitkit-cart", JSON.stringify(cartItems));
+    } catch (e) {
+      console.error("Failed to save cart to localStorage", e);
+    }
   }, [cartItems]);
 
-  function addToCart(product, quantity = 1) {
-    setCartItems((currentItems) => {
+  const showToast = useCallback((options) => {
+    setToast({
+      id: Date.now(),
+      title: options.title || "Cart Updated",
+      message: options.message,
+      type: options.type || "success",
+      duration: options.duration || 3500,
+      action:
+        options.action !== undefined
+          ? options.action
+          : { label: "View Cart →", to: "/cart" },
+    });
+  }, []);
+
+  const hideToast = useCallback(() => {
+    setToast(null);
+  }, []);
+
+  const addToCart = useCallback(
+    (product, quantity = 1) => {
       const productId = product._id || product.id;
-      const existingItem = currentItems.find(
+      const existingItem = cartItems.find(
         (item) => (item._id || item.id) === productId,
       );
 
-      if (existingItem) {
-        return currentItems.map((item) =>
-          (item._id || item.id) === productId
-            ? {
-                ...item,
-                quantity: Math.min(item.quantity + quantity, item.stock),
-              }
-            : item,
-        );
+      const currentQty = existingItem ? existingItem.quantity : 0;
+      const maxStock = typeof product.stock === "number" ? product.stock : 999;
+
+      if (maxStock <= 0) {
+        showToast({
+          title: "Out of Stock",
+          message: `"${product.name}" is currently sold out.`,
+          type: "warning",
+          action: null,
+        });
+        return false;
       }
 
-      return [
-        ...currentItems,
-        { ...product, quantity: Math.min(quantity, product.stock) },
-      ];
-    });
-  }
+      if (currentQty >= maxStock) {
+        showToast({
+          title: "Maximum Stock In Cart",
+          message: `You already have all ${maxStock} available units of "${product.name}".`,
+          type: "warning",
+        });
+        return false;
+      }
 
-  function increaseQuantity(productId) {
+      const availableToAdd = maxStock - currentQty;
+      const qtyToAdd = Math.min(quantity, availableToAdd);
+
+      setCartItems((currentItems) => {
+        if (existingItem) {
+          return currentItems.map((item) =>
+            (item._id || item.id) === productId
+              ? {
+                  ...item,
+                  quantity: item.quantity + qtyToAdd,
+                }
+              : item,
+          );
+        }
+
+        return [...currentItems, { ...product, quantity: qtyToAdd }];
+      });
+
+      const isPlural = qtyToAdd > 1;
+      showToast({
+        title: "Added to Cart!",
+        message: `${isPlural ? `${qtyToAdd}x ` : ""}"${product.name}" added to your bag.`,
+        type: "success",
+        action: { label: "View Cart →", to: "/cart" },
+      });
+
+      return true;
+    },
+    [cartItems, showToast],
+  );
+
+  const increaseQuantity = useCallback((productId) => {
     setCartItems((currentItems) =>
       currentItems.map((item) =>
         (item._id || item.id) === productId
@@ -45,9 +115,9 @@ function CartProvider({ children }) {
           : item,
       ),
     );
-  }
+  }, []);
 
-  function decreaseQuantity(productId) {
+  const decreaseQuantity = useCallback((productId) => {
     setCartItems((currentItems) =>
       currentItems
         .map((item) =>
@@ -57,42 +127,59 @@ function CartProvider({ children }) {
         )
         .filter((item) => item.quantity > 0),
     );
-  }
+  }, []);
 
-  function removeFromCart(productId) {
+  const removeFromCart = useCallback((productId) => {
     setCartItems((currentItems) =>
       currentItems.filter((item) => (item._id || item.id) !== productId),
     );
-  }
+  }, []);
 
-  function clearCart() {
+  const clearCart = useCallback(() => {
     setCartItems([]);
-  }
+  }, []);
 
-  const totalQuantity = cartItems.reduce(
-    (total, item) => total + item.quantity,
-    0,
-  );
-  const subtotal = cartItems.reduce(
-    (total, item) => total + item.price * item.quantity,
-    0,
+  const { totalQuantity, subtotal } = useMemo(() => {
+    let qty = 0;
+    let sum = 0;
+    for (const item of cartItems) {
+      qty += item.quantity || 0;
+      sum += (item.price || 0) * (item.quantity || 0);
+    }
+    return { totalQuantity: qty, subtotal: sum };
+  }, [cartItems]);
+
+  const contextValue = useMemo(
+    () => ({
+      cartItems,
+      toast,
+      showToast,
+      hideToast,
+      addToCart,
+      increaseQuantity,
+      decreaseQuantity,
+      removeFromCart,
+      clearCart,
+      totalQuantity,
+      subtotal,
+    }),
+    [
+      cartItems,
+      toast,
+      showToast,
+      hideToast,
+      addToCart,
+      increaseQuantity,
+      decreaseQuantity,
+      removeFromCart,
+      clearCart,
+      totalQuantity,
+      subtotal,
+    ],
   );
 
   return (
-    <CartContext.Provider
-      value={{
-        cartItems,
-        addToCart,
-        increaseQuantity,
-        decreaseQuantity,
-        removeFromCart,
-        clearCart,
-        totalQuantity,
-        subtotal,
-      }}
-    >
-      {children}
-    </CartContext.Provider>
+    <CartContext.Provider value={contextValue}>{children}</CartContext.Provider>
   );
 }
 
